@@ -1,8 +1,17 @@
-$Filter = 'Name -like "PRE-WS*" -or Name -like "PRE-LT*" -or Name -like "PRE-MA*"'
-$Domains = @('v18.med.va.gov', 'va.gov')
+param (
+    # the domains to get computers from
+    [string[]]$Domains = @('v18.med.va.gov', 'va.gov'),
+    # the filter to apply when selecting computers
+    [string]$Filter = 'Name -like "PRE-WS*" -or Name -like "PRE-LT*" -or Name -like "PRE-MA*"',
+    # the file to save the computer list
+    [string]$OutFile = '.\ComputerList.txt'
+)
+
+# output array
 $Computers = @()
+# get all computers from all domains
 foreach ($Domain in $Domains) {
     $Computers += (Get-ADComputer -Filter $Filter -Server (Get-ADDomainController -Discover -DomainName $Domain)).Name
 }
-
-$Computers | Out-File -FilePath '.\ComputerList.txt' -Force
+# write the array to a file
+$Computers | Out-File -FilePath $OutFile -Force
