@@ -87,6 +87,8 @@ foreach ($Item in $Computers) {
 foreach ($Computer in $Computers) {
     # skip any null or empty computers
     if (($null -eq $Computer) -or ($Computer -eq '')) { continue }
+    # skip the computer running this script
+    if ($env:COMPUTERNAME.ToLower() -eq $Computer.ToLower()) { continue }
     # the current computer we are working on
     Write-Host "$($Computer): " -NoNewline
     # check if the computer is not in AD

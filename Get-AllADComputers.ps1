@@ -9,7 +9,7 @@ param (
 
 # output array
 $Computers = @()
-# get all computers from all domains
+# get filtered computers from all domains
 foreach ($Domain in $Domains) {
     $Computers += (Get-ADComputer -Filter $Filter -Server (Get-ADDomainController -Discover -DomainName $Domain)).Name
 }
