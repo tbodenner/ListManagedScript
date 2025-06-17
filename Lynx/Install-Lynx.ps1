@@ -79,7 +79,7 @@ function Get-LynxInstall {
     if ($null -eq $Installed)
     {
         # if null, software was not found
-        return $false
+        return [System.Tuple]::Create($false, "Not Installed")
     }
     else {
         # otherwise, get the version and name from the check
@@ -88,24 +88,39 @@ function Get-LynxInstall {
         # check if the version and name match
         if (($InstalledName -eq $SoftwareName) -and ($InstalledVersion -eq $SoftwareVersion)) {
             # correct version of software is installed
-            return $true
+            return [System.Tuple]::Create($true, "Lynx Found")
         }
         else {
             # wrong version of software is installed
-            return $false
+            return [System.Tuple]::Create($false, "Version Mismatch")
         }
     }
+    # return our tuple
+    return $ReturnTuple
 }
 
-# check if lynx is installed
-if (Get-LynxInstall -eq $true) {
+# check for our lynx install
+$ResultTuple = Get-LynxInstall
+# check our result
+if ($ResultTuple.Item1 -eq $true) {
     # lynx is installed
-    return $true
+    return $ResultTuple
 }
 else {
     # lynx is not installed, so install lynx
     Install-Lynx
-}
 
-# return the lynx installed status
-return Get-LynxInstall
+    # check for our lynx install, again
+    $ResultTuple = Get-LynxInstall
+    # check our install again
+    if ($ResultTuple.Item1 -eq $true) {
+        # lynx was installed, so create a new tuple
+        return [System.Tuple]::Create($true, "Lynx Installed")
+    }
+    else {
+        # otherwise, the install failed, co create a new tuple
+        return [System.Tuple]::Create($false, "Install FAILED")
+    }
+    # return our new tuple
+    return $ReturnTuple
+}

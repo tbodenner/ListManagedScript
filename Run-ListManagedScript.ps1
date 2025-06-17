@@ -146,7 +146,7 @@ function Start-RemoteCommandJob {
             Write-Host "$($Computer): Job Start Failed" -ForegroundColor Red
         }
         else {
-            Write-Host "$($Computer):Job Started" -ForegroundColor DarkCyan
+            #Write-Host "$($Computer): Job Started" -ForegroundColor DarkCyan
         }
     }
     catch {
@@ -162,7 +162,7 @@ function Get-ScriptJobs {
         [Parameter(Mandatory)][System.Collections.Generic.List[string]]$ComputerList
     )
     # start collecting our finished job
-    Write-Host 'Getting Jobs...' -ForegroundColor Yellow
+    Write-Host 'Getting Script Jobs...' -ForegroundColor Yellow
     # store our jobs
     $AllJobs = 'JOBS'
     # continue checking for new jobs until none are found
@@ -176,37 +176,56 @@ function Get-ScriptJobs {
             # take action based on the job state
             switch ($Job.State) {
                 'Failed' {
-                    Write-Host "$($Computer): Job Failed" -ForegroundColor Red
-                    Remove-Job -Job $Job -ErrorAction SilentlyContinue
+                    # get the result
+                    $JobResult = Receive-Job -Job $Job
+                    # write our message
+                    Write-Host "$($Computer): Job Failed: $($JobResult)" -ForegroundColor Red
+                    # remove the job
+                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
                 }
-                {$_ -in ('Completed','Stopped')} {
+                {$_ -in ('Completed')} {
                     # get the job data
-                    $CommandResult = Receive-Job -Job $Job
+                    $CommandResultTuple = Receive-Job -Job $Job
+                    <#
                     # check if our result was null
-                    if ($null -eq $CommandResult) {
+                    if ($null -eq $CommandResultTuple) {
                         # our command returned no results, move onto the next computer
                         Write-Host "$($Computer): Null Result" -ForegroundColor Red
+                        # remove the job
+                        Remove-Job -Job $Job -ErrorAction SilentlyContinue
+                        # continue to the next job
                         continue
                     }
-                    # check our result
-                    if ($CommandResult -eq $true) {
+                    #>
+                    # return tuple = (boolean, string)
+                    # first item in a result tuple should be true/false
+                    $Result = $CommandResultTuple.Item1
+                    # second item should be a success or fail message
+                    $Message = $CommandResultTuple.Item2
+
+                    # check our result tuple
+                    if ($Result -eq $true) {
                         # command returned true and was successful
-                        Write-Host "$($Computer): Success" -ForegroundColor Green
+                        Write-Host "$($Computer): $($Message)" -ForegroundColor Green
                     }
                     else {
                         # remove the failed result from our computer list
                         [void]$ComputerList.Remove($Computer)
                         # command returned false and has failed
-                        Write-Host "$($Computer): Failed" -ForegroundColor Red
+                        Write-Host "$($Computer): $($Message)" -ForegroundColor Red
                     }
                     # remove the job
-                    Remove-Job -Job $Job -ErrorAction SilentlyContinue
+                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
                 }
-                {$_ -in ('Blocked', 'Suspended', 'Disconnected')} {
-                    # job stopped for an unknown reason
-                    Write-Host "$($Computer): Failed" -ForegroundColor Red
+                {$_ -in ('Stopped', 'Blocked', 'Suspended', 'Disconnected')} {
+                    # get the result
+                    $JobResult = Receive-Job -Job $Job
+                    # write our message, job stopped for an unknown reason
+                    Write-Host "$($Computer): Job Issue: $($JobResult)" -ForegroundColor Magenta
                     # stop the job
                     Stop-Job -Job $Job -ErrorAction SilentlyContinue
+                    # remove the job
+                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
                 }
                 default { continue }
             }
@@ -221,7 +240,7 @@ function Get-TestConnectionJobs {
     $OnlineComputers = [System.Collections.Generic.List[string]]::new()
 
     # start collecting our finished job
-    Write-Host 'Getting Jobs...' -ForegroundColor Yellow
+    Write-Host 'Getting Connection Jobs...' -ForegroundColor Yellow
     # store our jobs
     $AllJobs = 'JOBS'
     # continue checking for new jobs until none are found
@@ -413,14 +432,15 @@ $ScriptBlockTestConnection = {
     return (Test-ComputerConnection -Computer $Computer)
 }
 
+# checking if computers can be seen on the network
+Write-Host "Checking Computer Connections..." -ForegroundColor Yellow
 # check if our computers are in AD and test if they computer can be seen on the network
 foreach ($Computer in $Computers) {
     # skip any null or empty computers
     if (($null -eq $Computer) -or ($Computer -eq '')) { continue }
     # skip the computer running this script
     if ($env:COMPUTERNAME.ToLower() -eq $Computer.ToLower()) { continue }
-    # the current computer
-    #Write-Host "$($Computer): " -NoNewline
+
     # check if the computer is not in AD
     if ($Computer -notin $ADComputers) {
         # remove the good result from our output array
@@ -430,8 +450,6 @@ foreach ($Computer in $Computers) {
         # move to the next computer
         continue
     }
-    # get our computer's connection state
-    #$State = Test-ComputerConnection -Computer $Computer
 
     # parameters for our start job
     $JobParameters = @{
@@ -439,10 +457,9 @@ foreach ($Computer in $Computers) {
         ScriptBlock  = $ScriptBlockTestConnection
         ArgumentList = $Computer
     } 
-
     # create a job to get our computer's connection state
     Start-Job @JobParameters | Out-Null
-    Write-Host "$($Computer): Testing Connection"
+    #Write-Host "$($Computer): Testing Connection"
 }
 
 # a list of computers that were online when checked
@@ -461,38 +478,7 @@ foreach ($Computer in $OnlineComputers) {
     Start-RemoteCommandJob @ScriptParameters
 }
 
-<#
-# if our computer is online
-if ($State -eq [ConnectionState]::Online) {
-    # add our computer to our list
-    $OnlineComputers.Add($Computer)
-    # write a line for our online state
-    Write-Host $State -ForegroundColor Green -NoNewline
-    # the job start status will follow
-    Write-Host ": " -NoNewline
-    # parameters for our remote job
-    $ScriptParameters = @{
-        Computer = $Computer
-        ScriptFile = $ScriptFile
-        ScriptArguments = $ScriptArguments
-        Credentials = $Credentials
-    }
-    # run our script as a remote job
-    Start-RemoteCommandJob @ScriptParameters
-}
-else {
-    # if the computer is offline
-    if ($State -eq [ConnectionState]::Offline) {
-        # write a message with no color
-        Write-Host $State
-    }
-    else {
-        # otherwise, write the error in red
-        Write-Host $State -ForegroundColor Red
-    }
-}
-#>
-
+# check if our list is not null
 if ($null -ne $OnlineComputers) {
     # update our list from our jobs
     $FailedComputers = Get-ScriptJobs -ComputerList $OnlineComputers
