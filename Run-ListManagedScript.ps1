@@ -2,13 +2,13 @@
 param (
     # script that will be run on each computer
     [Parameter(Mandatory)][string]$ScriptFile,
-    # arguments to pass to script
+    # arguments to pass to the script
     [psobject[]]$ScriptArguments = $null,
     # file for our list of computers
     [string]$ListFile = '.\ComputerList.txt',
     # filter applied to Get-ADComputer
     [string]$ADFilter = 'Name -like "PRE-*"',
-    # credentials to pass to script
+    # credentials to pass to the script
     [pscredential]$Credentials = $null,
     # script file does not require administrator
     [switch]$NoAdmin,
@@ -35,6 +35,241 @@ function Get-HostFromDns {
     if ($null -eq $DnsResult.NameHost) { return $null }
     # get the computer name for this ip and return it
     return $DnsResult.NameHost.Split('.')[0]
+}
+
+enum ConnectionState {
+    DNSError
+    DNSMismatch
+    DNSNotFound
+    IPNotFound
+    NameNotFound
+    Offline
+    Online
+}
+
+function Test-ComputerConnection {
+    param (
+        # name of the computer to ping
+        [Parameter(Mandatory)][string]$Computer
+    )
+    # ping the computer
+    if ((Test-Connection -TargetName $Computer -Ping -Count 1 -TimeoutSeconds 1 -Quiet) -eq $True) {
+        # try to get dns data
+        try {
+            # get our computer's name from it's dns ip address
+            $IpAddress = (Resolve-DnsName -Name $Computer -ErrorAction SilentlyContinue).IPAddress
+            # check if our ip address is null
+            if ($null -eq $IpAddress) {
+                # no ip address returned from the dns request
+                return [ConnectionState]::IPNotFound
+            }
+            # check if we got multiple ips
+            if ($IpAddress.Count -gt 1) {
+                # check each ip for a computer name
+                foreach ($Ip in $IpAddress) {
+                    # get the computer name for this ip
+                    $ComputerDns = Get-HostFromDns -Ip $Ip
+                    # no computer name was returned for the ip
+                    if ($null -eq $ComputerDns) {
+                        # this ip did not return a name
+                        return [ConnectionState]::NameNotFound
+                    }
+                    # if the computer name matches our computer, stop the loop
+                    if ($ComputerDns.ToLower() -eq $Computer.ToLower()) { break }
+                }
+            }
+            else {
+                # otherwise, get the computer name for the ip
+                $ComputerDns =  Get-HostFromDns -Ip $IpAddress
+            }
+        }
+        catch  {
+            # write our dns error
+            Write-Host ($_ | Out-String)
+            # move to the next computer
+            return [ConnectionState]::DNSError
+        }
+
+        # check if our dns name is null
+        if ($null -eq $ComputerDns) {
+            # dns entry not found, so move to the next computer
+            return [ConnectionState]::DNSNotFound
+        }
+
+        # check if the name from dns matches our name
+        if ($ComputerDns.ToLower() -eq $Computer.ToLower()) {
+            # no issue, computer is online
+            return [ConnectionState]::Online
+        }
+        else {
+            # issue with dns, wrong computer was returned
+            return [ConnectionState]::DNSMismatch
+        }
+    }
+    else {
+        # target computer could not be pinged
+        return [ConnectionState]::Offline
+    }
+}
+
+function Start-RemoteCommandJob {
+    param (
+        # name of the remote computer
+        [Parameter(Mandatory)][string]$Computer,
+        # script that will be run on each computer
+        [Parameter(Mandatory)][string]$ScriptFile,
+        # arguments to pass to the script
+        [psobject[]]$ScriptArguments = $null,
+        # credentials to pass to the script
+        [pscredential]$Credentials = $null
+    )
+    # try to run a script on the remote computer
+    try {
+        # change our default settings for our remote session used by invoke-command
+        $PssOptions = New-PSSessionOption -MaxConnectionRetryCount 0 -OpenTimeout 30000 -OperationTimeout 30000
+        # invoke command options
+        $Parameters = @{
+            ComputerName  = $Computer
+            FilePath      = $ScriptFile
+            ArgumentList  = $ScriptArguments
+            SessionOption = $PssOptions
+            ErrorAction   = "SilentlyContinue"
+        }
+        # add our credentials if they are not null
+        if ($null -ne $Credentials) {
+            $Parameters.Add('Credential', $Credentials)
+        }
+        # run the script as a job
+        $CommandResult = Invoke-Command @Parameters -AsJob
+        # check if our result was null
+        if ($null -eq $CommandResult) {
+            Write-Host "$($Computer): Job Start Failed" -ForegroundColor Red
+        }
+        else {
+            Write-Host "$($Computer):Job Started" -ForegroundColor DarkCyan
+        }
+    }
+    catch {
+        # command failed for an unknown reason
+        Write-Host "$($Computer): Command Error" -ForegroundColor Red
+        # write the error
+        Write-Host ($_ | Out-String)
+    }
+}
+
+function Get-ScriptJobs {
+    param (
+        [Parameter(Mandatory)][System.Collections.Generic.List[string]]$ComputerList
+    )
+    # start collecting our finished job
+    Write-Host 'Getting Jobs...' -ForegroundColor Yellow
+    # store our jobs
+    $AllJobs = 'JOBS'
+    # continue checking for new jobs until none are found
+    while ($Null -ne $AllJobs) {
+        # get all the current jobs
+        $AllJobs = Get-Job
+        # get each job's status
+        foreach ($Job in $AllJobs) {
+            # get the computer name from the job
+            $Computer = $Job.Location
+            # take action based on the job state
+            switch ($Job.State) {
+                'Failed' {
+                    Write-Host "$($Computer): Job Failed" -ForegroundColor Red
+                    Remove-Job -Job $Job -ErrorAction SilentlyContinue
+                }
+                {$_ -in ('Completed','Stopped')} {
+                    # get the job data
+                    $CommandResult = Receive-Job -Job $Job
+                    # check if our result was null
+                    if ($null -eq $CommandResult) {
+                        # our command returned no results, move onto the next computer
+                        Write-Host "$($Computer): Null Result" -ForegroundColor Red
+                        continue
+                    }
+                    # check our result
+                    if ($CommandResult -eq $true) {
+                        # command returned true and was successful
+                        Write-Host "$($Computer): Success" -ForegroundColor Green
+                    }
+                    else {
+                        # remove the failed result from our computer list
+                        [void]$ComputerList.Remove($Computer)
+                        # command returned false and has failed
+                        Write-Host "$($Computer): Failed" -ForegroundColor Red
+                    }
+                    # remove the job
+                    Remove-Job -Job $Job -ErrorAction SilentlyContinue
+                }
+                {$_ -in ('Blocked', 'Suspended', 'Disconnected')} {
+                    # job stopped for an unknown reason
+                    Write-Host "$($Computer): Failed" -ForegroundColor Red
+                    # stop the job
+                    Stop-Job -Job $Job -ErrorAction SilentlyContinue
+                }
+                default { continue }
+            }
+        }
+    }
+    # return the updated list
+    return $ComputerList
+}
+
+function Get-TestConnectionJobs {
+    # list of our online computers
+    $OnlineComputers = [System.Collections.Generic.List[string]]::new()
+
+    # start collecting our finished job
+    Write-Host 'Getting Jobs...' -ForegroundColor Yellow
+    # store our jobs
+    $AllJobs = 'JOBS'
+    # continue checking for new jobs until none are found
+    while ($null -ne $AllJobs) {
+        # get all the current jobs
+        $AllJobs = Get-Job
+        # get each job's status
+        foreach ($Job in $AllJobs) {
+            # get the computer name from the job
+            $Computer = $Job.Name
+            # take action based on the job state
+            switch ($Job.State) {
+                'Failed' {
+                    # remove the failed job
+                    Remove-Job -Job $Job -ErrorAction SilentlyContinue
+                }
+                {$_ -in ('Completed','Stopped')} {
+                    # get the job data
+                    $CommandResult = Receive-Job -Job $Job
+                    # our state
+                    $State = $null
+                    # check if our result was null
+                    if ($null -eq $CommandResult) {
+                        # our command returned no results, move onto the next computer
+                        continue
+                    }
+                    else {
+                        # convert our result
+                        $State = [ConnectionState]$CommandResult
+                    }
+                    # check if our state is online
+                    if ($State -eq [ConnectionState]::Online) {
+                        # add our computer to our list
+                        $OnlineComputers.Add($Computer)
+                    }
+                    # remove the job
+                    Remove-Job -Job $Job -ErrorAction SilentlyContinue
+                }
+                {$_ -in ('Blocked', 'Suspended', 'Disconnected')} {
+                    # stop the job
+                    Stop-Job -Job $Job -ErrorAction SilentlyContinue
+                }
+                default { continue }
+            }
+        }
+    }
+    # return the updated list
+    return $OnlineComputers
 }
 
 # if the computer list file is missing, create it
@@ -67,7 +302,7 @@ foreach ($Server in $DomainServers) {
     $ADComputers += (Get-ADComputer -Filter $ADFilter -Server $Server | Where-Object { $_.Enabled -eq $true }).Name
 }
 
-# cerate a list for our output computers
+# create a list for our output computers
 $OutputComputers = [System.Collections.Generic.List[string]]::new()
 
 # check if our array has any items in it
@@ -83,166 +318,188 @@ foreach ($Item in $Computers) {
     $OutputComputers.Add($Item)
 }
 
-# foreach computer
+# scriptblock for our test connection job
+$ScriptBlockTestConnection = {
+    param ([string]$Computer)
+
+    function Get-HostFromDns {
+        param ([Parameter(Mandatory)][string]$Ip)
+        # get our dns data from our ip
+        $DnsResult = (Resolve-DnsName -Name $Ip -ErrorAction SilentlyContinue)
+        # if out result is null, return null
+        if ($null -eq $DnsResult) { return $null }
+        # if our result has no host, return null
+        if ($null -eq $DnsResult.NameHost) { return $null }
+        # get the computer name for this ip and return it
+        return $DnsResult.NameHost.Split('.')[0]
+    }
+
+    enum ConnectionState {
+        DNSError
+        DNSMismatch
+        DNSNotFound
+        IPNotFound
+        NameNotFound
+        Offline
+        Online
+    }
+
+    function Test-ComputerConnection {
+        param (
+            # name of the computer to ping
+            [Parameter(Mandatory)][string]$Computer
+        )
+        # ping the computer
+        if ((Test-Connection -TargetName $Computer -Ping -Count 1 -TimeoutSeconds 1 -Quiet) -eq $True) {
+            # try to get dns data
+            try {
+                # get our computer's name from it's dns ip address
+                $IpAddress = (Resolve-DnsName -Name $Computer -ErrorAction SilentlyContinue).IPAddress
+                # check if our ip address is null
+                if ($null -eq $IpAddress) {
+                    # no ip address returned from the dns request
+                    return [ConnectionState]::IPNotFound
+                }
+                # check if we got multiple ips
+                if ($IpAddress.Count -gt 1) {
+                    # check each ip for a computer name
+                    foreach ($Ip in $IpAddress) {
+                        # get the computer name for this ip
+                        $ComputerDns = Get-HostFromDns -Ip $Ip
+                        # no computer name was returned for the ip
+                        if ($null -eq $ComputerDns) {
+                            # this ip did not return a name
+                            return [ConnectionState]::NameNotFound
+                        }
+                        # if the computer name matches our computer, stop the loop
+                        if ($ComputerDns.ToLower() -eq $Computer.ToLower()) { break }
+                    }
+                }
+                else {
+                    # otherwise, get the computer name for the ip
+                    $ComputerDns =  Get-HostFromDns -Ip $IpAddress
+                }
+            }
+            catch  {
+                # write our dns error
+                Write-Host ($_ | Out-String)
+                # move to the next computer
+                return [ConnectionState]::DNSError
+            }
+
+            # check if our dns name is null
+            if ($null -eq $ComputerDns) {
+                # dns entry not found, so move to the next computer
+                return [ConnectionState]::DNSNotFound
+            }
+
+            # check if the name from dns matches our name
+            if ($ComputerDns.ToLower() -eq $Computer.ToLower()) {
+                # no issue, computer is online
+                return [ConnectionState]::Online
+            }
+            else {
+                # issue with dns, wrong computer was returned
+                return [ConnectionState]::DNSMismatch
+            }
+        }
+        else {
+            # target computer could not be pinged
+            return [ConnectionState]::Offline
+        }
+    }
+
+    # return our computer's state
+    return (Test-ComputerConnection -Computer $Computer)
+}
+
+# check if our computers are in AD and test if they computer can be seen on the network
 foreach ($Computer in $Computers) {
     # skip any null or empty computers
     if (($null -eq $Computer) -or ($Computer -eq '')) { continue }
     # skip the computer running this script
     if ($env:COMPUTERNAME.ToLower() -eq $Computer.ToLower()) { continue }
-    # the current computer we are working on
-    Write-Host "$($Computer): " -NoNewline
+    # the current computer
+    #Write-Host "$($Computer): " -NoNewline
     # check if the computer is not in AD
     if ($Computer -notin $ADComputers) {
         # remove the good result from our output array
         [void]$OutputComputers.Remove($Computer)
         # computer was not found in the ad computer array
-        Write-Host 'Not in AD or Disabled' -ForegroundColor Red
+        Write-Host "$($Computer): Not in AD or Disabled" -ForegroundColor Red
         # move to the next computer
         continue
     }
-    # ping the computer
-    if ((Test-Connection -TargetName $Computer -Ping -Count 1 -TimeoutSeconds 1 -Quiet) -eq $True) {
-        # try to get dns data
-        try {
-            # get our computer's name from it's dns ip address
-            $IpAddress = (Resolve-DnsName -Name $Computer -ErrorAction SilentlyContinue).IPAddress
-            # check if our ip address is null
-            if ($null -eq $IpAddress) {
-                # no ip address returned from the dns request
-                Write-Host 'IP Not Found' -ForegroundColor Red
-                # move to the next computer
-                continue
-            }
-            # check if we got multiple ips
-            if ($IpAddress.Count -gt 1) {
-                # check each ip for a computer name
-                foreach ($Ip in $IpAddress) {
-                    # get the computer name for this ip
-                    $ComputerDns = Get-HostFromDns -Ip $Ip
-                    # no computer name was returned for the ip
-                    if ($null -eq $ComputerDns) {
-                        # this ip did not return a name
-                        continue
-                    }
-                    # if the computer name matches our computer, stop the loop
-                    if ($ComputerDns.ToLower() -eq $Computer.ToLower()) { break }
-                }
-            }
-            else {
-                # otherwise, get the computer name for the ip
-                $ComputerDns =  Get-HostFromDns -Ip $IpAddress
-            }
-        }
-        catch  {
-            # write our dns error
-            Write-Host 'DNS Error' -ForegroundColor Red
-            Write-Host ($_ | Out-String)
-            # move to the next computer
-            continue
-        }
+    # get our computer's connection state
+    #$State = Test-ComputerConnection -Computer $Computer
 
-        # try to run a script on the remote computer
-        try {
-            # check if our dns name is null
-            if ($null -eq $ComputerDns) {
-                # dns entry not found, so move to the next computer
-                Write-Host 'DNS Not Found' -ForegroundColor Red
-                continue
-            }
-            # check if the name from dns matches our name
-            if ($ComputerDns.ToLower() -eq $Computer.ToLower()) {
-                # change our default settings for our remote session used by invoke-command
-                $PssOptions = New-PSSessionOption -MaxConnectionRetryCount 0 -OpenTimeout 30000 -OperationTimeout 30000
-                # invoke command options
-                $Parameters = @{
-                    ComputerName  = $Computer
-                    FilePath      = $ScriptFile
-                    ArgumentList  = $ScriptArguments
-                    SessionOption = $PssOptions
-                    ErrorAction   = "SilentlyContinue"
-                }
-                # add our credentials if they are not null
-                if ($null -ne $Credentials) {
-                    $Parameters.Add('Credential', $Credentials)
-                }
-                # run the script as a job
-                $CommandResult = Invoke-Command @Parameters -AsJob
-                # check if our result was null
-                if ($null -eq $CommandResult) {
-                    Write-Host 'Job Start Failed' -ForegroundColor Red
-                }
-                else {
-                    Write-Host 'Job Started' -ForegroundColor DarkCyan
-                }
-            }
-            else {
-                # issue with dns, wrong computer was returned
-                Write-Host 'DNS Mismatch' -ForegroundColor Red
-            }
-        }
-        catch {
-            # command failed for an unknown reason
-            Write-Host 'Command Error' -ForegroundColor Red
-            # write the error
-            Write-Host ($_ | Out-String)
-        }
-    }
-    else {
-        # target computer could not be pinged
-        Write-Host 'Offline'
-    }
+    # parameters for our start job
+    $JobParameters = @{
+        Name         = $Computer
+        ScriptBlock  = $ScriptBlockTestConnection
+        ArgumentList = $Computer
+    } 
+
+    # create a job to get our computer's connection state
+    Start-Job @JobParameters | Out-Null
+    Write-Host "$($Computer): Testing Connection"
 }
 
-# start collecting jobs
-Write-Host 'Getting Jobs...' -ForegroundColor Yellow
+# a list of computers that were online when checked
+$OnlineComputers = Get-TestConnectionJobs
 
-# store our jobs
-$AllJobs = 'JOBS'
-# continue checking for new jobs until none are found
-while ($Null -ne $AllJobs) {
-    # get all the current jobs
-    $AllJobs = Get-Job
-    # get each job's status
-    foreach ($Job in $AllJobs) {
-        # get the computer name from the job
-        $Computer = $Job.Location
-        # take action based on the job state
-        switch ($Job.State) {
-            'Failed' {
-                Write-Host "$($Computer): Job Failed" -ForegroundColor Red
-                Remove-Job -Job $Job -ErrorAction SilentlyContinue
-            }
-            {$_ -in ('Completed','Stopped')} {
-                # get the job data
-                $CommandResult = Receive-Job -Job $Job
-                # check if our result was null
-                if ($null -eq $CommandResult) {
-                    # our command returned no results, move onto the next computer
-                    Write-Host "$($Computer): Null Result" -ForegroundColor Red
-                    continue
-                }
-                # check our result
-                if ($CommandResult -eq $true) {
-                    # remove the successful result from our output array
-                    [void]$OutputComputers.Remove($Computer)
-                    # command returned true and was successful
-                    Write-Host "$($Computer): Success" -ForegroundColor Green
-                }
-                else {
-                    # command returned false and has failed
-                    Write-Host "$($Computer): Failed" -ForegroundColor Red
-                }
-                # remove the job
-                Remove-Job -Job $Job -ErrorAction SilentlyContinue
-            }
-            {$_ -in ('Blocked', 'Suspended', 'Disconnected')} {
-                # job stopped for an unknown reason
-                Write-Host "$($Computer): Failed" -ForegroundColor Red
-                # stop the job
-                Stop-Job -Job $Job -ErrorAction SilentlyContinue
-            }
-            default { continue }
-        }
+# run our script on each online computer
+foreach ($Computer in $OnlineComputers) {
+    # parameters for our remote job
+    $ScriptParameters = @{
+        Computer = $Computer
+        ScriptFile = $ScriptFile
+        ScriptArguments = $ScriptArguments
+        Credentials = $Credentials
+    }
+    # run our script as a remote job
+    Start-RemoteCommandJob @ScriptParameters
+}
+
+<#
+# if our computer is online
+if ($State -eq [ConnectionState]::Online) {
+    # add our computer to our list
+    $OnlineComputers.Add($Computer)
+    # write a line for our online state
+    Write-Host $State -ForegroundColor Green -NoNewline
+    # the job start status will follow
+    Write-Host ": " -NoNewline
+    # parameters for our remote job
+    $ScriptParameters = @{
+        Computer = $Computer
+        ScriptFile = $ScriptFile
+        ScriptArguments = $ScriptArguments
+        Credentials = $Credentials
+    }
+    # run our script as a remote job
+    Start-RemoteCommandJob @ScriptParameters
+}
+else {
+    # if the computer is offline
+    if ($State -eq [ConnectionState]::Offline) {
+        # write a message with no color
+        Write-Host $State
+    }
+    else {
+        # otherwise, write the error in red
+        Write-Host $State -ForegroundColor Red
+    }
+}
+#>
+
+if ($null -ne $OnlineComputers) {
+    # update our list from our jobs
+    $FailedComputers = Get-ScriptJobs -ComputerList $OnlineComputers
+
+    # removed the successful computers from our output list
+    foreach ($Computer in $FailedComputers) {
+        [void]$OutputComputers.Remove($Computer)
     }
 }
 
