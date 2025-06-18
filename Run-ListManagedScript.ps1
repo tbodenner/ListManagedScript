@@ -13,7 +13,9 @@ param (
     # script file does not require administrator
     [switch]$NoAdmin,
     # if set, the input list will not be updated
-    [switch]$DoNotUpdateList
+    [switch]$DoNotUpdateList,
+    # send our credentials to the script as an argument
+    [switch]$SendCredentialsToScript
 )
 
 function Get-IsAdmin {
@@ -145,9 +147,6 @@ function Start-RemoteCommandJob {
         if ($null -eq $CommandResult) {
             Write-Host "$($Computer): Job Start Failed" -ForegroundColor Red
         }
-        else {
-            #Write-Host "$($Computer): Job Started" -ForegroundColor DarkCyan
-        }
     }
     catch {
         # command failed for an unknown reason
@@ -159,12 +158,15 @@ function Start-RemoteCommandJob {
 
 function Get-ScriptJobs {
     param (
-        [Parameter(Mandatory)][System.Collections.Generic.List[string]]$ComputerList
+        [Parameter(Mandatory)][System.Collections.Generic.List[string]]$ComputerList,
+        [Parameter(Mandatory=$true)][int]$TotalJobs
     )
     # start collecting our finished job
-    Write-Host 'Getting Script Jobs...' -ForegroundColor Yellow
+    Write-Host 'Getting Script Results' -ForegroundColor Yellow
     # store our jobs
     $AllJobs = 'JOBS'
+    # job counter
+    $JobCount = 0
     # continue checking for new jobs until none are found
     while ($Null -ne $AllJobs) {
         # get all the current jobs
@@ -179,24 +181,16 @@ function Get-ScriptJobs {
                     # get the result
                     $JobResult = Receive-Job -Job $Job
                     # write our message
-                    Write-Host "$($Computer): Job Failed: $($JobResult)" -ForegroundColor Red
+                    Write-Host "$($Computer): Job Failed" -ForegroundColor Red
                     # remove the job
                     Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+                    # update our count
+                    $JobCount += 1
                 }
-                {$_ -in ('Completed')} {
+                'Completed' {
                     # get the job data
                     $CommandResultTuple = Receive-Job -Job $Job
-                    <#
-                    # check if our result was null
-                    if ($null -eq $CommandResultTuple) {
-                        # our command returned no results, move onto the next computer
-                        Write-Host "$($Computer): Null Result" -ForegroundColor Red
-                        # remove the job
-                        Remove-Job -Job $Job -ErrorAction SilentlyContinue
-                        # continue to the next job
-                        continue
-                    }
-                    #>
+                    
                     # return tuple = (boolean, string)
                     # first item in a result tuple should be true/false
                     $Result = $CommandResultTuple.Item1
@@ -216,6 +210,8 @@ function Get-ScriptJobs {
                     }
                     # remove the job
                     Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+                    # update our count
+                    $JobCount += 1
                 }
                 {$_ -in ('Stopped', 'Blocked', 'Suspended', 'Disconnected')} {
                     # get the result
@@ -226,23 +222,36 @@ function Get-ScriptJobs {
                     Stop-Job -Job $Job -ErrorAction SilentlyContinue
                     # remove the job
                     Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+                    # update our count
+                    $JobCount += 1
                 }
                 default { continue }
             }
         }
+        # update our progress
+        Update-Progress -Count $JobCount -Total $TotalJobs -Activity 'Script Results'
+        # pause for a short time
+        Start-Sleep -Milliseconds 500
     }
+    # complete our progress
+    Update-Progress -Count 0 -Total 0 -Activity 'Done' -IsDone
     # return the updated list
     return $ComputerList
 }
 
 function Get-TestConnectionJobs {
+    param (
+        [Parameter(Mandatory=$true)][int]$TotalJobs
+    )
     # list of our online computers
     $OnlineComputers = [System.Collections.Generic.List[string]]::new()
 
     # start collecting our finished job
-    Write-Host 'Getting Connection Jobs...' -ForegroundColor Yellow
+    Write-Host 'Getting Connection Results' -ForegroundColor Yellow
     # store our jobs
     $AllJobs = 'JOBS'
+    # job counter
+    $JobCount = 0
     # continue checking for new jobs until none are found
     while ($null -ne $AllJobs) {
         # get all the current jobs
@@ -256,39 +265,82 @@ function Get-TestConnectionJobs {
                 'Failed' {
                     # remove the failed job
                     Remove-Job -Job $Job -ErrorAction SilentlyContinue
+                    # update our count
+                    $JobCount += 1
                 }
-                {$_ -in ('Completed','Stopped')} {
+                'Completed' {
                     # get the job data
                     $CommandResult = Receive-Job -Job $Job
                     # our state
                     $State = $null
-                    # check if our result was null
-                    if ($null -eq $CommandResult) {
-                        # our command returned no results, move onto the next computer
-                        continue
-                    }
-                    else {
+                    # check if our result was not null
+                    if ($null -ne $CommandResult) {
                         # convert our result
                         $State = [ConnectionState]$CommandResult
-                    }
-                    # check if our state is online
-                    if ($State -eq [ConnectionState]::Online) {
-                        # add our computer to our list
-                        $OnlineComputers.Add($Computer)
+                        # check if our state is online
+                        if ($State -eq [ConnectionState]::Online) {
+                            # add our computer to our list
+                            $OnlineComputers.Add($Computer)
+                        }
                     }
                     # remove the job
-                    Remove-Job -Job $Job -ErrorAction SilentlyContinue
+                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+                    # update our count
+                    $JobCount += 1
                 }
-                {$_ -in ('Blocked', 'Suspended', 'Disconnected')} {
+                {$_ -in ('Stopped', 'Blocked', 'Suspended', 'Disconnected')} {
                     # stop the job
                     Stop-Job -Job $Job -ErrorAction SilentlyContinue
+                    # remove the job
+                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+                    # update our count
+                    $JobCount += 1
                 }
                 default { continue }
             }
+            # update our progress
+            Update-Progress -Count $JobCount -Total $TotalJobs -Activity 'Connection Results'
+            # pause for a short time
+            Start-Sleep -Milliseconds 500
         }
     }
+    # complete our progress
+    Update-Progress -Count 0 -Total 0 -Activity 'Done' -IsDone
     # return the updated list
     return $OnlineComputers
+}
+
+function Update-Progress {
+    param (
+        [Parameter(Mandatory=$true)][int]$Count,
+        [Parameter(Mandatory=$true)][int]$Total,
+        [Parameter(Mandatory=$true)][string]$Activity,
+        [switch]$IsDone
+    )
+    # check if our total is zero
+    if ($Total -eq 0) {
+        # to avoid a divide by zero error, set the percentage to zero
+        $PComplete = 0
+    }
+    else {
+        # otherwise, do the math to calculate our percentage
+        $PComplete = ($Count / $Total) * 100
+    }
+    # if our percentage is above 100 percent, set it to 100 percent
+    if ($PComplete -gt 100) { $PComplete = 100 }
+    # if our percentage is below zero percent, set it to zero percent
+    if ($PComplete -lt 0) { $PComplete = 0 }
+    # set our status message to out counts
+    $Status = "$($Count)/$($Total) Complete"
+    # check if we are done
+    if ($IsDone -eq $true) {
+        # complete our progress
+        Write-Progress -Id 0 -Activity $Activity -Status $Status -PercentComplete $PComplete -Completed
+    }
+    else {
+        # otherwise, update our progress
+        Write-Progress -Id 0 -Activity $Activity -Status $Status -PercentComplete $PComplete
+    }
 }
 
 # if the computer list file is missing, create it
@@ -303,6 +355,17 @@ if ($NoAdmin -eq $false) {
         # if switch is not set and user is not an admin, write the error and exit
         Write-Host "Scripts must be run by an administrator unless -NoAdmin switch is set." -ForegroundColor Red
         exit
+    }
+}
+
+# check if our credentials should be passed to our script
+if ($SendCredentialsToScript -eq $true) {
+    # check if we have credentials
+    if ($null -eq $Credentials) {
+        # get the user running the script
+        $ScriptUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        # get the user's credentials
+        $Credentials = Get-Credential -UserName $ScriptUser
     }
 }
 
@@ -331,6 +394,10 @@ if ($Computers.Length -le 0) {
     # write our list to our file
     $ADComputers | Out-File -FilePath $ListFile -Force
 }
+
+# write our computer counts
+Write-Host "  AD Computers: $($ADComputers.Length)" -ForegroundColor DarkCyan
+Write-Host "List Computers: $($Computers.Length)" -ForegroundColor DarkCyan
 
 # add all our items to our output list
 foreach ($Item in $Computers) {
@@ -433,7 +500,9 @@ $ScriptBlockTestConnection = {
 }
 
 # checking if computers can be seen on the network
-Write-Host "Checking Computer Connections..." -ForegroundColor Yellow
+Write-Host "Testing Computer Connections" -ForegroundColor Yellow
+# our counter
+$TestConnJobCount = 0
 # check if our computers are in AD and test if they computer can be seen on the network
 foreach ($Computer in $Computers) {
     # skip any null or empty computers
@@ -446,42 +515,61 @@ foreach ($Computer in $Computers) {
         # remove the good result from our output array
         [void]$OutputComputers.Remove($Computer)
         # computer was not found in the ad computer array
-        Write-Host "$($Computer): Not in AD or Disabled" -ForegroundColor Red
-        # move to the next computer
-        continue
+        Write-Progress -ParentId 0 -Id 1 -Status "$($Computer) Not in AD or Disabled" -Activity 'Computer' -PercentComplete 0
     }
-
-    # parameters for our start job
-    $JobParameters = @{
-        Name         = $Computer
-        ScriptBlock  = $ScriptBlockTestConnection
-        ArgumentList = $Computer
-    } 
-    # create a job to get our computer's connection state
-    Start-Job @JobParameters | Out-Null
-    #Write-Host "$($Computer): Testing Connection"
+    else {
+        # parameters for our start job
+        $JobParameters = @{
+            Name         = $Computer
+            ScriptBlock  = $ScriptBlockTestConnection
+            ArgumentList = $Computer
+        } 
+        # create a job to get our computer's connection state
+        Start-Job @JobParameters | Out-Null
+    }
+    # update our count
+    $TestConnJobCount += 1
+    # update our progress
+    Update-Progress -Count $TestConnJobCount -Total $Computers.Length -Activity 'Creating Test Jobs'
 }
+# complete our progress
+Update-Progress -Count 0 -Total 0 -Activity 'Done' -IsDone
+# complete our child progress
+Write-Progress -ParentId 0 -Id 1 -Activity 'Done' -Completed
 
 # a list of computers that were online when checked
-$OnlineComputers = Get-TestConnectionJobs
+$OnlineComputers = Get-TestConnectionJobs -TotalJobs $TestConnJobCount
 
+# number of jobs started for our script
+$ScriptJobCount = 0
 # run our script on each online computer
 foreach ($Computer in $OnlineComputers) {
     # parameters for our remote job
     $ScriptParameters = @{
         Computer = $Computer
         ScriptFile = $ScriptFile
-        ScriptArguments = $ScriptArguments
+        ScriptArguments = @($ScriptArguments)
         Credentials = $Credentials
+    }
+    # if this switch is set
+    if ($SendCredentialsToScript -eq $true) {
+        # add our credentials to our script's arguments
+        $ScriptParameters['ScriptArguments'] += $Credentials
     }
     # run our script as a remote job
     Start-RemoteCommandJob @ScriptParameters
+    # update our count
+    $ScriptJobCount += 1
+    # update our progress
+    Update-Progress -Count $ScriptJobCount -Total $OnlineComputers.Length -Activity 'Creating Script Jobs'
 }
+# complete our progress
+Update-Progress -Count 0 -Total 0 -Activity 'Done' -IsDone
 
 # check if our list is not null
 if ($null -ne $OnlineComputers) {
     # update our list from our jobs
-    $FailedComputers = Get-ScriptJobs -ComputerList $OnlineComputers
+    $FailedComputers = Get-ScriptJobs -ComputerList $OnlineComputers -TotalJobs $ScriptJobCount
 
     # removed the successful computers from our output list
     foreach ($Computer in $FailedComputers) {

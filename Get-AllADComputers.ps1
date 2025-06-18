@@ -7,11 +7,17 @@ param (
     [string]$OutFile = '.\ComputerList.txt'
 )
 
-# output array
-$Computers = @()
+# our ordered hashtable to get a unique list of computers
+$ComputersHashtable = [ordered]@{}
 # get filtered computers from all domains
 foreach ($Domain in $Domains) {
+    # get the computers from the current domain server
     $Computers += (Get-ADComputer -Filter $Filter -Server (Get-ADDomainController -Discover -DomainName $Domain)).Name
+    # loop through our computers array
+    foreach ($Computer in $Computers) {
+        # and add the computer to our hashtable
+        $ComputersHashtable[$Computer] = ''
+    }
 }
 # write the array to a file
-$Computers | Out-File -FilePath $OutFile -Force
+$ComputersHashtable.Keys | Out-File -FilePath $OutFile -Force
