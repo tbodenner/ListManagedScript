@@ -13,8 +13,12 @@ $ComputersHashtable = [ordered]@{}
 foreach ($Domain in $Domains) {
     # get the computers from the current domain server
     $Computers += (Get-ADComputer -Filter $Filter -Server (Get-ADDomainController -Discover -DomainName $Domain)).Name
+    # if we didn't get any computers, then continue
+    if ($null -eq $Computers) { continue }
     # loop through our computers array
     foreach ($Computer in $Computers) {
+        # check if our computer is null or empty, and skip it
+        if (($null -eq $Computer) -or ($Computer -eq '')) { continue }
         # and add the computer to our hashtable
         $ComputersHashtable[$Computer] = ''
     }

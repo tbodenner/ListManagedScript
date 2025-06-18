@@ -136,6 +136,7 @@ function Start-RemoteCommandJob {
             ArgumentList  = $ScriptArguments
             SessionOption = $PssOptions
             ErrorAction   = "SilentlyContinue"
+            WarningAction = "SilentlyContinue"
         }
         # add our credentials if they are not null
         if ($null -ne $Credentials) {
@@ -179,11 +180,11 @@ function Get-ScriptJobs {
             switch ($Job.State) {
                 'Failed' {
                     # get the result
-                    $JobResult = Receive-Job -Job $Job
+                    #$JobResult = Receive-Job -Job $Job
                     # write our message
                     Write-Host "$($Computer): Job Failed" -ForegroundColor Red
                     # remove the job
-                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
                     # update our count
                     $JobCount += 1
                 }
@@ -209,7 +210,7 @@ function Get-ScriptJobs {
                         Write-Host "$($Computer): $($Message)" -ForegroundColor Red
                     }
                     # remove the job
-                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
                     # update our count
                     $JobCount += 1
                 }
@@ -219,9 +220,9 @@ function Get-ScriptJobs {
                     # write our message, job stopped for an unknown reason
                     Write-Host "$($Computer): Job Issue: $($JobResult)" -ForegroundColor Magenta
                     # stop the job
-                    Stop-Job -Job $Job -ErrorAction SilentlyContinue
+                    Stop-Job -Job $Job -ErrorAction SilentlyContinue | Out-Null
                     # remove the job
-                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
                     # update our count
                     $JobCount += 1
                 }
@@ -230,8 +231,6 @@ function Get-ScriptJobs {
         }
         # update our progress
         Update-Progress -Count $JobCount -Total $TotalJobs -Activity 'Script Results'
-        # pause for a short time
-        Start-Sleep -Milliseconds 500
     }
     # complete our progress
     Update-Progress -Count 0 -Total 0 -Activity 'Done' -IsDone
@@ -264,7 +263,7 @@ function Get-TestConnectionJobs {
             switch ($Job.State) {
                 'Failed' {
                     # remove the failed job
-                    Remove-Job -Job $Job -ErrorAction SilentlyContinue
+                    Remove-Job -Job $Job -ErrorAction SilentlyContinue | Out-Null
                     # update our count
                     $JobCount += 1
                 }
@@ -284,15 +283,15 @@ function Get-TestConnectionJobs {
                         }
                     }
                     # remove the job
-                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
                     # update our count
                     $JobCount += 1
                 }
                 {$_ -in ('Stopped', 'Blocked', 'Suspended', 'Disconnected')} {
                     # stop the job
-                    Stop-Job -Job $Job -ErrorAction SilentlyContinue
+                    Stop-Job -Job $Job -ErrorAction SilentlyContinue | Out-Null
                     # remove the job
-                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+                    Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
                     # update our count
                     $JobCount += 1
                 }
@@ -300,8 +299,6 @@ function Get-TestConnectionJobs {
             }
             # update our progress
             Update-Progress -Count $JobCount -Total $TotalJobs -Activity 'Connection Results'
-            # pause for a short time
-            Start-Sleep -Milliseconds 500
         }
     }
     # complete our progress
@@ -370,7 +367,7 @@ if ($SendCredentialsToScript -eq $true) {
 }
 
 # get list of computers
-$Computers = Get-Content -Path $ListFile
+$Computers = [array](Get-Content -Path $ListFile)
 
 # get our domain servers
 $DomainServers = @(
@@ -396,7 +393,7 @@ if ($Computers.Length -le 0) {
 }
 
 # write our computer counts
-Write-Host "  AD Computers: $($ADComputers.Length)" -ForegroundColor DarkCyan
+Write-Host "  AD Computers: $($ADComputers.Count)" -ForegroundColor DarkCyan
 Write-Host "List Computers: $($Computers.Length)" -ForegroundColor DarkCyan
 
 # add all our items to our output list
@@ -554,7 +551,8 @@ foreach ($Computer in $OnlineComputers) {
     # if this switch is set
     if ($SendCredentialsToScript -eq $true) {
         # add our credentials to our script's arguments
-        $ScriptParameters['ScriptArguments'] += $Credentials
+        $ScriptParameters['ScriptArguments'] = @($Credentials)
+        $ScriptParameters['Credentials'] = $null
     }
     # run our script as a remote job
     Start-RemoteCommandJob @ScriptParameters
