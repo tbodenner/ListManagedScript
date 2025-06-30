@@ -500,6 +500,8 @@ $ScriptBlockTestConnection = {
 Write-Host "Testing Computer Connections" -ForegroundColor Yellow
 # our counter
 $TestConnJobCount = 0
+# number of computers not in AD or disabled
+$NotInAdCount = 0
 # check if our computers are in AD and test if they computer can be seen on the network
 foreach ($Computer in $Computers) {
     # skip any null or empty computers
@@ -511,8 +513,10 @@ foreach ($Computer in $Computers) {
     if ($Computer -notin $ADComputers) {
         # remove the good result from our output array
         [void]$OutputComputers.Remove($Computer)
+        # update our count
+        $NotInAdCount += 1
         # computer was not found in the ad computer array
-        Write-Progress -ParentId 0 -Id 1 -Status "$($Computer) Not in AD or Disabled" -Activity 'Computer' -PercentComplete 0
+        Write-Progress -ParentId 0 -Id 1 -Status "$($NotInAdCount): $($Computer) Not in AD or Disabled" -Activity 'Computer' -PercentComplete 0
     }
     else {
         # parameters for our start job
