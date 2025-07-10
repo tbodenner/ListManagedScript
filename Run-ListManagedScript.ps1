@@ -170,6 +170,8 @@ function Get-ScriptJobs {
     $JobCount = 0
     # result count hashtable
     $JobResultsHashtable = @{}
+    # result count hashtable
+    $JobIdCompleteHashtable = @{}
     # continue checking for new jobs until none are found
     while ($Null -ne $AllJobs) {
         # get all the current jobs
@@ -190,6 +192,8 @@ function Get-ScriptJobs {
                 Stop-Job -Job $Job -ErrorAction SilentlyContinue | Out-Null
                 # remove the job
                 Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
+                # add our job to our completed hashtable
+                $JobIdCompleteHashtable[$Job.Id] = $true
                 # update our result key
                 $ResultKey = 'Timed Out'
             }
@@ -205,6 +209,8 @@ function Get-ScriptJobs {
                     $ResultKey = $JobFailedMessage
                     # remove the job
                     Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
+                    # add our job to our completed hashtable
+                    $JobIdCompleteHashtable[$Job.Id] = $true
                     # update our count
                     $JobCount += 1
                 }
@@ -219,34 +225,28 @@ function Get-ScriptJobs {
                     $Message = $CommandResultTuple.Item2
 
                     # check our result tuple
-                    if ($Result -eq $true) {
-                        # command returned true and was successful
-                        #Write-Host "$($Computer): $($Message)" -ForegroundColor Green
-                    }
-                    else {
+                    if ($Result -eq $false) {
                         # remove the failed result from our computer list
                         [void]$ComputerList.Remove($Computer)
-                        # command returned false and has failed
-                        #Write-Host "$($Computer): $($Message)" -ForegroundColor Red
                     }
                     # update our result key
                     $ResultKey = $Message
                     # remove the job
                     Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
+                    # add our job to our completed hashtable
+                    $JobIdCompleteHashtable[$Job.Id] = $true
                     # update our count
                     $JobCount += 1
                 }
                 {$_ -in ('Stopped', 'Blocked', 'Suspended', 'Disconnected')} {
-                    # get the result
-                    #$JobResult = Receive-Job -Job $Job
-                    # write our message, job stopped for an unknown reason
-                    #Write-Host "$($Computer): Job Issue: $($JobResult)" -ForegroundColor Magenta
                     # update our result key
                     $ResultKey = $Job.State
                     # stop the job
                     Stop-Job -Job $Job -ErrorAction SilentlyContinue | Out-Null
                     # remove the job
                     Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
+                    # add our job to our completed hashtable
+                    $JobIdCompleteHashtable[$Job.Id] = $true
                     # update our count
                     $JobCount += 1
                 }
@@ -254,14 +254,17 @@ function Get-ScriptJobs {
             }
             # only update our hashtable if we have a result key
             if (($null -ne $ResultKey) -and ($ResultKey -ne '')) {
-                # update our hashtable
-                if ($JobResultsHashtable.ContainsKey($ResultKey) -eq $false) {
-                    # if our message is not in our hashtable, add it with an initial value
-                    $JobResultsHashtable[$ResultKey] = 1
-                }
-                else {
-                    # otherwise, update our count
-                    $JobResultsHashtable[$ResultKey] += 1
+                # check if this job has been completed
+                if ($JobIdCompleteHashtable.ContainsKey($Job.Id) -eq $true) {
+                    # update our hashtable
+                    if ($JobResultsHashtable.ContainsKey($ResultKey) -eq $false) {
+                        # if our message is not in our hashtable, add it with an initial value
+                        $JobResultsHashtable[$ResultKey] = 1
+                    }
+                    else {
+                        # otherwise, update our count
+                        $JobResultsHashtable[$ResultKey] += 1
+                    }
                 }
             }
         }
