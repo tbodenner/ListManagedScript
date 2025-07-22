@@ -2,9 +2,11 @@ param (
     # the domains to get computers from
     [string[]]$Domains = @('v18.med.va.gov', 'va.gov'),
     # the filter to apply when selecting computers
-    [string]$Filter = 'SamAccountName -like "VHAPRE*" -or SamAccountName -like "OITPRE*"',
+    [string]$Filter = {SamAccountName -like "VHAPRE*" -or SamAccountName -like "OITPRE*"},
     # the file to save the computer list
-    [string]$OutFile = '.\UserList.csv'
+    [string]$OutFile = '.\UserList.csv',
+    # switch to append to a file instead of overwriting it
+    [switch]$Append
 )
 
 # our ordered hashtable to get a unique list of users
@@ -23,7 +25,14 @@ foreach ($Domain in $Domains) {
         $UserHashtable[$User.SamAccountName] = "$($User.SamAccountName),$($User.GivenName),$($User.Surname),$($User.UserPrincipalName),$($User.LastLogonDate),$($User.Description)"
     }
 }
-# write our header
-"AccountName,First,Last,EMail,LogOn,Description" | Out-File -FilePath $OutFile -Force
-# write the array to a file
-$UserHashtable.Values | Out-File -FilePath $OutFile -Force -Append
+# check if we are appending a file
+if ($Append -eq $false) {
+    # write our header
+    "AccountName,First,Last,EMail,LogOn,Description" | Out-File -FilePath $OutFile -Force
+    # append the array to the file with the header
+    $UserHashtable.Values | Out-File -FilePath $OutFile -Force -Append
+}
+else {
+    # append the array to the file
+    $UserHashtable.Values | Out-File -FilePath $OutFile -Force -Append
+}

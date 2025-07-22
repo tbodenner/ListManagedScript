@@ -163,7 +163,7 @@ function Get-ScriptJobs {
         [Parameter(Mandatory=$true)][int]$TotalJobs
     )
     # start collecting our finished job
-    Write-Host 'Getting Script Results' -ForegroundColor Yellow
+    #Write-Host 'Getting Script Results' -ForegroundColor Yellow
     # store our jobs
     $AllJobs = 'JOBS'
     # job counter
@@ -273,10 +273,15 @@ function Get-ScriptJobs {
     }
     # complete our progress
     Update-Progress -Count 0 -Total 0 -Activity 'Done' -IsDone
+    # our total result count
+    $ResultTotal = 0
     # write our counts
     foreach ($Item in $JobResultsHashtable.Keys) {
         Write-Host "$($Item): $($JobResultsHashtable[$Item])" -ForegroundColor Cyan
+        $ResultTotal += $JobResultsHashtable[$Item]
     }
+    Write-Host "Job Count: $($JobCount)" -ForegroundColor Cyan
+    Write-Host "Result Count: $($ResultTotal)" -ForegroundColor Cyan
     # return the updated list
     return $ComputerList
 }
@@ -289,7 +294,7 @@ function Get-TestConnectionJobs {
     $OnlineComputers = [System.Collections.Generic.List[string]]::new()
 
     # start collecting our finished job
-    Write-Host 'Getting Connection Results' -ForegroundColor Yellow
+    #Write-Host 'Getting Connection Results' -ForegroundColor Yellow
     # store our jobs
     $AllJobs = 'JOBS'
     # job counter
@@ -540,7 +545,7 @@ $ScriptBlockTestConnection = {
 }
 
 # checking if computers can be seen on the network
-Write-Host "Testing Computer Connections" -ForegroundColor Yellow
+#Write-Host "Testing Computer Connections" -ForegroundColor Yellow
 # our counter
 $TestConnJobCount = 0
 # number of computers not in AD or disabled

@@ -2,9 +2,11 @@ param (
     # the domains to get computers from
     [string[]]$Domains = @('v18.med.va.gov', 'va.gov'),
     # the filter to apply when selecting computers
-    [string]$Filter = 'Name -like "PRE-WS*" -or Name -like "PRE-LT*" -or Name -like "PRE-MA*"',
+    [string]$Filter = {Name -like "PRE-WS*" -or Name -like "PRE-LT*" -or Name -like "PRE-MA*"},
     # the file to save the computer list
-    [string]$OutFile = '.\ComputerList.txt'
+    [string]$OutFile = '.\ComputerList.txt',
+    # switch to append to a file instead of overwriting it
+    [switch]$Append
 )
 
 # our ordered hashtable to get a unique list of computers
@@ -23,5 +25,12 @@ foreach ($Domain in $Domains) {
         $ComputersHashtable[$Computer] = ''
     }
 }
-# write the array to a file
-$ComputersHashtable.Keys | Out-File -FilePath $OutFile -Force
+# check if we are appending a file
+if ($Append -eq $false) {
+    # write the array to a file
+    $ComputersHashtable.Keys | Out-File -FilePath $OutFile -Force
+}
+else {
+    # append the array to a file
+    $ComputersHashtable.Keys | Out-File -FilePath $OutFile -Force -Append
+}
