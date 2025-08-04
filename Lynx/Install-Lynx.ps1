@@ -26,7 +26,7 @@ function Install-Lynx {
     # executable location
     $MsiexecExe = "$($SystemFolder)\msiexec.exe"
     # lynx folder
-    $LynxFolder = '\\VHAPREFPC4\1.Desktop Icon\ScriptInstalls\Installers\Lynx'
+    $LynxFolder = '\\VHAPREFPC4.v18.med.va.gov\1.Desktop Icon\ScriptInstalls\Installers\Lynx'
     # Install file
     $LynxInstaller = "LynxClient_v$($LynxInstallerVersion).msi"
     # temp folder
@@ -107,9 +107,15 @@ if ($ResultTuple.Item1 -eq $true) {
     return $ResultTuple
 }
 else {
+    # clear the errors
+    $Error.Clear()
     # lynx is not installed, so install lynx
     Install-Lynx
-
+    # check if we had any errors
+    if ($Error.Count -gt 0) {
+        # if there was an error, write a message
+        Write-Host "Error on computer: $($env:COMPUTERNAME)" -ForegroundColor Red
+    }
     # check for our lynx install, again
     $ResultTuple = Get-LynxInstall
     # check our install again
