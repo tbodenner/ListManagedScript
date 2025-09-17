@@ -131,12 +131,13 @@ function Start-RemoteCommandJob {
         $PssOptions = New-PSSessionOption -MaxConnectionRetryCount 0 -OpenTimeout 30000 -OperationTimeout 30000
         # invoke command options
         $Parameters = @{
-            ComputerName  = $Computer
-            FilePath      = $ScriptFile
-            ArgumentList  = $ScriptArguments
-            SessionOption = $PssOptions
-            ErrorAction   = "SilentlyContinue"
-            WarningAction = "SilentlyContinue"
+            ComputerName      = $Computer
+            FilePath          = $ScriptFile
+            ArgumentList      = $ScriptArguments
+            SessionOption     = $PssOptions
+            ErrorAction       = "SilentlyContinue"
+            WarningAction     = "SilentlyContinue"
+            #ConfigurationName = "Powershell.7"
         }
         # add our credentials if they are not null
         if ($null -ne $Credentials) {
@@ -200,35 +201,31 @@ function Get-ScriptJobs {
             # take action based on the job state
             switch ($Job.State) {
                 'Failed' {
-                    # get the result
-                    #$JobResult = Receive-Job -Job $Job
                     # update our result key
                     $JobFailedMessage = 'Job Failed'
-                    #Write-Host "$($Computer): Job Failed" -ForegroundColor Red
                     # update our hashtable
                     $ResultKey = $JobFailedMessage
+                    # write some info about the job
+                    Write-Host "Failed Job: $($Job.Location)" -ForegroundColor Red
+                    # receive the job
+                    Receive-Job -Job $Job -ErrorAction SilentlyContinue | Out-Null
                     # remove the job
                     Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
                     # add our job to our completed hashtable
                     $JobIdCompleteHashtable[$Job.Id] = $true
                     # update our count
                     $JobCount += 1
+                    # remove the failed result from our computer list
+                    [void]$ComputerList.Remove($Computer)
                 }
                 'Completed' {
                     # get the job data
                     $CommandResultTuple = Receive-Job -Job $Job
-                    
                     # return tuple = (boolean, string)
                     # first item in a result tuple should be true/false
                     $Result = $CommandResultTuple.Item1
                     # second item should be a success or fail message
                     $Message = $CommandResultTuple.Item2
-
-                    # check our result tuple
-                    if ($Result -eq $false) {
-                        # remove the failed result from our computer list
-                        [void]$ComputerList.Remove($Computer)
-                    }
                     # update our result key
                     $ResultKey = $Message
                     # remove the job
@@ -237,6 +234,11 @@ function Get-ScriptJobs {
                     $JobIdCompleteHashtable[$Job.Id] = $true
                     # update our count
                     $JobCount += 1
+                    # check our result tuple
+                    if ($Result -eq $false) {
+                        # remove the failed result from our computer list
+                        [void]$ComputerList.Remove($Computer)
+                    }
                 }
                 {$_ -in ('Stopped', 'Blocked', 'Suspended', 'Disconnected')} {
                     # update our result key
@@ -249,6 +251,8 @@ function Get-ScriptJobs {
                     $JobIdCompleteHashtable[$Job.Id] = $true
                     # update our count
                     $JobCount += 1
+                    # remove the failed result from our computer list
+                    [void]$ComputerList.Remove($Computer)
                 }
                 default { continue }
             }
@@ -278,7 +282,12 @@ function Get-ScriptJobs {
     # write our counts
     foreach ($Item in $JobResultsHashtable.Keys) {
         Write-Host "$($Item): $($JobResultsHashtable[$Item])" -ForegroundColor Cyan
-        $ResultTotal += $JobResultsHashtable[$Item]
+        $ParsedInt = 0
+        # check if our item is an integer
+        if (([int]::TryParse($JobResultsHashtable[$Item], [ref]$ParsedInt)) -eq $true) {
+            # update our result with the parsed value
+            $ResultTotal += $ParsedInt
+        }
     }
     Write-Host "Job Count: $($JobCount)" -ForegroundColor Cyan
     Write-Host "Result Count: $($ResultTotal)" -ForegroundColor Cyan
@@ -619,10 +628,10 @@ Update-Progress -Count 0 -Total 0 -Activity 'Done' -IsDone
 # check if our list is not null
 if ($null -ne $OnlineComputers) {
     # update our list from our jobs
-    $FailedComputers = Get-ScriptJobs -ComputerList $OnlineComputers -TotalJobs $ScriptJobCount
+    $SuccessfulComputers = Get-ScriptJobs -ComputerList $OnlineComputers -TotalJobs $ScriptJobCount
 
     # removed the successful computers from our output list
-    foreach ($Computer in $FailedComputers) {
+    foreach ($Computer in $SuccessfulComputers) {
         [void]$OutputComputers.Remove($Computer)
     }
 }

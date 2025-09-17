@@ -34,13 +34,13 @@ function Install-Lynx {
     # check if the temp directory exists
     if ((Test-Path -Path $TempFolder) -eq $false) {
         # if not found, create it
-        New-Item -Path $TempFolder -ItemType 'directory' | Out-Null
+        New-Item -Path $TempFolder -ItemType Directory
     }
     # map drive
     $MapDriveLetter = 'V'
-    New-PSDrive -Name $MapDriveLetter -Root $LynxFolder -Persist -PSProvider 'FileSystem' -Credential $Creds | Out-Null
+    New-PSDrive -Name $MapDriveLetter -Root $LynxFolder -Persist -PSProvider 'FileSystem' -Credential $Creds
     # copy installer to temp
-    Copy-Item -Path "$($MapDriveLetter):\$($LynxInstaller)" -Destination $TempFolder -Force -Recurse | Out-Null
+    Copy-Item -Path "$($MapDriveLetter):\$($LynxInstaller)" -Destination $TempFolder -Force -Recurse
     # remove mapped drive
     Remove-PSDrive $MapDriveLetter
     # change to our temp folder
@@ -99,6 +99,20 @@ function Get-LynxInstall {
     return $ReturnTuple
 }
 
+# the temp folder
+$TempFolder = 'C:\Temp'
+# transcript file
+$TranscriptFile = Join-Path -Path $TempFolder -ChildPath 'Install-Lynx-Transcript.txt'
+
+# check if the temp folder exists
+if ((Test-Path -Path $TempFolder) -eq $false) {
+    # folder doesn't exist, so create the folder
+    New-Item -Path $TempFolder -ItemType Directory
+}
+
+# start the transcript
+Start-Transcript -Path $TranscriptFile
+
 # check for our lynx install
 $ResultTuple = Get-LynxInstall
 # check our result
@@ -110,11 +124,15 @@ else {
     # clear the errors
     $Error.Clear()
     # lynx is not installed, so install lynx
-    Install-Lynx
+    $InstallResultTuple = Install-Lynx
     # check if we had any errors
     if ($Error.Count -gt 0) {
+        # write the error
+        Write-Host $Error[0]
         # if there was an error, write a message
         Write-Host "Error on computer: $($env:COMPUTERNAME)" -ForegroundColor Red
+        # return our error from the install
+        return $InstallResultTuple
     }
     # check for our lynx install, again
     $ResultTuple = Get-LynxInstall

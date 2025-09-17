@@ -1,0 +1,1 @@
+$DATE = (Get-Date).AddDays(-3); .\Get-AllADComputers.ps1 -OutFile .\Lynx\ComputerList.txt -Filter {(Name -like "PRE-WS*" -or Name -like "PRE-LT*" -or Name -like "PRE-MA*") -and (whenCreated -ge $DATE)} -Append
