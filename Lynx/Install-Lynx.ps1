@@ -13,7 +13,7 @@ function Install-Lynx {
     # lynx service name
     $LynxUiProcessName = 'LynxClientUICore'
     # get the lynx service
-    $LynxService = Get-Service $LynxServiceName -ErrorAction SilentlyContinue
+    $LynxService = Get-Service $LynxServiceName -ErrorAction Ignore -WarningAction Ignore
     # save the lynx service startup type
     $LynxStartType = $null
     # check if lynx service exists
@@ -43,6 +43,8 @@ function Install-Lynx {
     Copy-Item -Path "$($MapDriveLetter):\$($LynxInstaller)" -Destination $TempFolder -Force -Recurse
     # remove mapped drive
     Remove-PSDrive $MapDriveLetter
+    # sleep for 10 seconds to avoid file in use errors
+    Start-Sleep -Seconds 10
     # change to our temp folder
     Set-Location $TempFolder
     # lynx install parameters
@@ -52,6 +54,8 @@ function Install-Lynx {
     $CommandString = "$($MsiexecExe) /i `"$($Msi)`" $($MArg)"
     # install lynx
     cmd.exe /c $CommandString
+    # wait 10 seconds after the install finishes
+    Start-Sleep -Seconds 10
 
     # check if we should disable lynx
     if ($LynxStartType -eq 'Disabled') {
@@ -101,17 +105,18 @@ function Get-LynxInstall {
 
 # the temp folder
 $TempFolder = 'C:\Temp'
-# transcript file
-$TranscriptFile = Join-Path -Path $TempFolder -ChildPath 'Install-Lynx-Transcript.txt'
 
 # check if the temp folder exists
 if ((Test-Path -Path $TempFolder) -eq $false) {
     # folder doesn't exist, so create the folder
-    New-Item -Path $TempFolder -ItemType Directory
+    New-Item -Path $TempFolder -ItemType Directory -ErrorAction Ignore -WarningAction Ignore
 }
 
+# transcript file
+$TranscriptFile = Join-Path -Path $TempFolder -ChildPath 'Install-Lynx-Transcript.txt'
+
 # start the transcript
-Start-Transcript -Path $TranscriptFile
+Start-Transcript -Path $TranscriptFile -ErrorAction Ignore -WarningAction Ignore
 
 # check for our lynx install
 $ResultTuple = Get-LynxInstall
@@ -142,6 +147,8 @@ else {
         return [System.Tuple]::Create($true, "Lynx Installed")
     }
     else {
+        # write the computer name so the computer can be checked and/or diagnosed
+        Write-Host "$($env:COMPUTERNAME): Install FAILED" -ForegroundColor Magenta
         # otherwise, the install failed, co create a new tuple
         return [System.Tuple]::Create($false, "Install FAILED")
     }

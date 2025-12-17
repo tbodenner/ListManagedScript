@@ -1,13 +1,18 @@
 # parameters
 param (
     # script that will be run on each computer
-    [Parameter(Mandatory)][string]$ScriptFile,
+    [Parameter(Mandatory=$true)]
+    [string]$ScriptFile,
     # arguments to pass to the script
     [psobject[]]$ScriptArguments = $null,
     # file for our list of computers
     [string]$ListFile = '.\ComputerList.txt',
-    # filter applied to Get-ADComputer
-    [string]$ADFilter = 'Name -like "PRE-*"',
+    # our root OUs to search in
+    [Parameter(Mandatory=$true)]
+    [string[]]$RootOU,
+    # filter applied to get our AD computers
+    [Parameter(Mandatory=$true)]
+    [string[]]$Filter,
     # credentials to pass to the script
     [pscredential]$Credentials = $null,
     # script file does not require administrator
@@ -201,10 +206,8 @@ function Get-ScriptJobs {
             # take action based on the job state
             switch ($Job.State) {
                 'Failed' {
-                    # update our result key
-                    $JobFailedMessage = 'Job Failed'
                     # update our hashtable
-                    $ResultKey = $JobFailedMessage
+                    $ResultKey = 'Job Failed'
                     # write some info about the job
                     Write-Host "Failed Job: $($Job.Location)" -ForegroundColor Red
                     # receive the job
@@ -224,10 +227,8 @@ function Get-ScriptJobs {
                     # return tuple = (boolean, string)
                     # first item in a result tuple should be true/false
                     $Result = $CommandResultTuple.Item1
-                    # second item should be a success or fail message
-                    $Message = $CommandResultTuple.Item2
-                    # update our result key
-                    $ResultKey = $Message
+                    # second item should be a success or fail message, so update our result key
+                    $ResultKey = $CommandResultTuple.Item2
                     # remove the job
                     Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
                     # add our job to our completed hashtable
@@ -257,17 +258,27 @@ function Get-ScriptJobs {
                 default { continue }
             }
             # only update our hashtable if we have a result key
-            if (($null -ne $ResultKey) -and ($ResultKey -ne '')) {
-                # check if this job has been completed
-                if ($JobIdCompleteHashtable.ContainsKey($Job.Id) -eq $true) {
-                    # update our hashtable
-                    if ($JobResultsHashtable.ContainsKey($ResultKey) -eq $false) {
-                        # if our message is not in our hashtable, add it with an initial value
-                        $JobResultsHashtable[$ResultKey] = 1
-                    }
-                    else {
-                        # otherwise, update our count
-                        $JobResultsHashtable[$ResultKey] += 1
+            if ($null -ne $ResultKey) {
+                # set our trimmed string to an empty string
+                $TrimmedResultKey = ""
+                # check if our result key is a string
+                if (($ResultKey.GetType()) -eq [string]) {
+                    # remove any whitespace from our result string
+                    $TrimmedResultKey = $ResultKey.Trim()
+                }
+                # check if our string is empty
+                if ($TrimmedResultKey -ne "") {
+                    # check if this job has been completed
+                    if ($JobIdCompleteHashtable.ContainsKey($Job.Id) -eq $true) {
+                        # update our hashtable
+                        if ($JobResultsHashtable.ContainsKey($TrimmedResultKey) -eq $false) {
+                            # if our message is not in our hashtable, add it with an initial value
+                            $JobResultsHashtable[$TrimmedResultKey] = 1
+                        }
+                        else {
+                            # otherwise, update our count
+                            $JobResultsHashtable[$TrimmedResultKey] += 1
+                        }
                     }
                 }
             }
@@ -397,6 +408,19 @@ function Update-Progress {
     }
 }
 
+# check for our required module
+$RequiredModuleName = 'LDAP-ADTools'
+if($null -eq (Get-Module -Name $RequiredModuleName -ListAvailable)) {
+    # the module was not found, write a message and exit
+    Write-Host "Required module '$($RequiredModuleName)' not found" -ForegroundColor Red
+    Write-Host "`nModule can be found at https://github.com/tbodenner/PowerShell-Modules" -ForegroundColor Yellow
+    Write-Host "Update the PSModulePath: `$env:PSModulePath += `";<path to module>`"" -ForegroundColor Yellow
+    Write-Host "`nExiting" -ForegroundColor Red
+    exit
+}
+# import our module only for this script
+Import-Module $RequiredModuleName -Scope Local
+
 # if the computer list file is missing, create it
 if ((Test-Path -Path $ListFile) -eq $false) {
     New-Item -ItemType File $ListFile | Out-Null
@@ -423,20 +447,23 @@ if ($SendCredentialsToScript -eq $true) {
     }
 }
 
-# get list of computers
+# get an array of computers from our file
 $Computers = [array](Get-Content -Path $ListFile)
 
-# get our domain servers
-$DomainServers = @(
-    (Get-ADDomainController -Discover),
-    (Get-ADDomainController -Discover -DomainName 'va.gov')
-)
-# create an empty array for our ad computers
-$ADComputers = @()
 # get our ad computers from all our domains
-foreach ($Server in $DomainServers) {
-    $ADComputers += (Get-ADComputer -Filter $ADFilter -Server $Server | Where-Object { $_.Enabled -eq $true }).Name
+$ADComputersHashtable = Get-LDAPComputer -RootOU $RootOU -Computers $Filter -Properties 'useraccountcontrol'
+
+# only save our computers that are enabled
+$EnabledComputersHashtable = @{}
+foreach ($Key in $ADComputersHashtable.Keys) {
+    # check if the computer is enabled
+    if ($ADComputersHashtable[$Key]['useraccountcontrol'] -eq 4096) { 
+        # add the computer to our hashtable
+        $EnabledComputersHashtable[$ADComputersHashtable[$Key]['name']] = ''
+    }
 }
+# create an array from our enabled computer hashtable
+$ADComputers = $EnabledComputersHashtable.Keys
 
 # create a list for our output computers
 $OutputComputers = [System.Collections.Generic.List[string]]::new()
