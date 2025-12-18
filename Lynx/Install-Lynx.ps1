@@ -39,6 +39,13 @@ function Install-Lynx {
     # map drive
     $MapDriveLetter = 'V'
     New-PSDrive -Name $MapDriveLetter -Root $LynxFolder -Persist -PSProvider 'FileSystem' -Credential $Creds
+    # check if the drive was mapped
+    if ($null -eq (Get-PSDrive -Name $MapDriveLetter -ErrorAction Ignore -WarningAction Ignore)) {
+        # write the error
+        Write-Host "$($env:COMPUTERNAME): Unable to map drive" -ForegroundColor Red
+        # exit the function
+        return
+    }
     # copy installer to temp
     Copy-Item -Path "$($MapDriveLetter):\$($LynxInstaller)" -Destination $TempFolder -Force -Recurse
     # remove mapped drive
