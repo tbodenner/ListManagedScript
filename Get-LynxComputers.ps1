@@ -10,9 +10,9 @@ if ($All -eq $true) {
 else {
     # check if today is monday
     if ((Get-Date).DayOfWeek -eq 'Monday') {
-        # otherwise, get any computers added in the last seven days
-        $Date = (Get-Date).AddDays(-7)
-        Write-Host "Appending list with computers added in last SEVEN days." -ForegroundColor Cyan
+        # otherwise, get any computers added in the last three days
+        $Date = (Get-Date).AddDays(-3)
+        Write-Host "Appending list with computers added in last THREE days." -ForegroundColor Cyan
     }
     else {
         # otherwise, get any computers added in the last two days

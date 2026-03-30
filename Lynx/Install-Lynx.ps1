@@ -123,7 +123,7 @@ if ((Test-Path -Path $TempFolder) -eq $false) {
 $TranscriptFile = Join-Path -Path $TempFolder -ChildPath 'Install-Lynx-Transcript.txt'
 
 # start the transcript
-Start-Transcript -Path $TranscriptFile -ErrorAction Ignore -WarningAction Ignore
+Start-Transcript -Path $TranscriptFile -Force -ErrorAction Ignore -WarningAction Ignore
 
 # check for our lynx install
 $ResultTuple = Get-LynxInstall
