@@ -26,7 +26,7 @@ function Install-Lynx {
     # executable location
     $MsiexecExe = "$($SystemFolder)\msiexec.exe"
     # lynx folder
-    $LynxFolder = '\\VHAPREFPC4.v18.med.va.gov\1.Desktop Icon\ScriptInstalls\Installers\Lynx'
+    $LynxFolder = '\\vhapreprt22.va.gov\3.PostImageSetup\ScriptFiles\Installers\Lynx'
     # Install file
     $LynxInstaller = "LynxClient_v$($LynxInstallerVersion).msi"
     # temp folder
